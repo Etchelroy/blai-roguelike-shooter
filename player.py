@@ -2,131 +2,147 @@ import pygame
 import math
 
 class Player:
-    def __init__(self, x, y, arena):
-        self.arena = arena
-        self.rect = pygame.Rect(0, 0, 28, 28)
-        self.rect.center = (x, y)
-        self.hp = 100
-        self.max_hp = 100
-        self.speed = 220
-        self.damage = 20
-        self.fire_rate = 0.25
-        self.fire_timer = 0
+    def __init__(self, x, y):
+        self.x = float(x)
+        self.y = float(y)
+        self.radius = 14
+        self.speed = 220.0
+        self.hp = 100.0
+        self.max_hp = 100.0
+        self.damage = 20.0
+        self.fire_rate = 5.0
+        self.bullet_speed = 500.0
         self.multishot = 1
         self.piercing = False
-        self.shield_orbs = 0
-        self.orb_angle = 0
-        self.dash_speed = 600
-        self.dash_duration = 0.15
-        self.dash_cooldown = 1.0
+        self.shield_orb = False
+        self.shield_orb_angle = 0.0
         self.dashing = False
-        self.dash_timer = 0
-        self.dash_cd_timer = 0
-        self.dash_dir = (0, 0)
-        self.vx = 0
-        self.vy = 0
-        self.angle = 0
-        self.invincible_timer = 0
+        self.dash_timer = 0.0
+        self.dash_cooldown = 0.0
+        self.dash_duration = 0.18
+        self.dash_speed = 600.0
+        self.dash_dx = 0.0
+        self.dash_dy = 0.0
+        self.dash_max_cooldown = 1.0
         self.collected_powerups = []
+        self.invincible_timer = 0.0
 
-    def update(self, dt, keys, mx, my, dash, arena):
-        dx, dy = 0, 0
-        if keys[pygame.K_w] or keys[pygame.K_UP]: dy -= 1
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]: dy += 1
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]: dx -= 1
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]: dx += 1
-
-        length = math.hypot(dx, dy)
-        if length > 0:
-            dx /= length
-            dy /= length
-
-        self.dash_cd_timer = max(0, self.dash_cd_timer - dt)
-        self.fire_timer = max(0, self.fire_timer - dt)
-        self.invincible_timer = max(0, self.invincible_timer - dt)
-
-        if dash and not self.dashing and self.dash_cd_timer <= 0:
+    def try_dash(self, mx, my):
+        if self.dash_cooldown <= 0:
+            dx = mx - self.x
+            dy = my - self.y
+            dist = math.hypot(dx, dy)
+            if dist == 0:
+                dx, dy = 1, 0
+            else:
+                dx /= dist
+                dy /= dist
+            self.dash_dx = dx
+            self.dash_dy = dy
             self.dashing = True
             self.dash_timer = self.dash_duration
-            self.dash_cd_timer = self.dash_cooldown
-            if length > 0:
-                self.dash_dir = (dx, dy)
-            else:
-                cx = mx - self.rect.centerx
-                cy = my - self.rect.centery
-                cl = math.hypot(cx, cy)
-                if cl > 0:
-                    self.dash_dir = (cx/cl, cy/cl)
-                else:
-                    self.dash_dir = (1, 0)
+            self.dash_cooldown = self.dash_max_cooldown
             self.invincible_timer = self.dash_duration
-
-        if self.dashing:
-            self.dash_timer -= dt
-            if self.dash_timer <= 0:
-                self.dashing = False
-            move_x = self.dash_dir[0] * self.dash_speed * dt
-            move_y = self.dash_dir[1] * self.dash_speed * dt
-        else:
-            move_x = dx * self.speed * dt
-            move_y = dy * self.speed * dt
-
-        self.rect.x += move_x
-        self.rect.y += move_y
-        self._clamp_to_arena(arena)
-
-        self.angle = math.degrees(math.atan2(my - self.rect.centery, mx - self.rect.centerx))
-
-    def _clamp_to_arena(self, arena):
-        if self.rect.left < arena.left: self.rect.left = arena.left
-        if self.rect.right > arena.right: self.rect.right = arena.right
-        if self.rect.top < arena.top: self.rect.top = arena.top
-        if self.rect.bottom > arena.bottom: self.rect.bottom = arena.bottom
-
-    def shoot(self, mx, my, proj_mgr):
-        if self.fire_timer > 0:
-            return
-        self.fire_timer = self.fire_rate
-        cx, cy = self.rect.center
-        base_angle = math.atan2(my - cy, mx - cx)
-        spread = 0.2
-        for i in range(self.multishot):
-            if self.multishot == 1:
-                a = base_angle
-            else:
-                a = base_angle + (i - (self.multishot - 1) / 2) * spread
-            proj_mgr.spawn_player(cx, cy, a, self.damage, self.piercing)
 
     def take_damage(self, amount):
         if self.invincible_timer > 0:
             return
         self.hp -= amount
-        self.hp = max(0, self.hp)
+        if self.hp < 0:
+            self.hp = 0
 
-    def get_orb_positions(self):
-        positions = []
-        for i in range(self.shield_orbs):
-            a = self.orb_angle + (2 * math.pi * i / self.shield_orbs)
-            positions.append((math.cos(a) * 35, math.sin(a) * 35))
-        return positions
+    def update(self, dt, keys, arena_rect):
+        if self.dash_cooldown > 0:
+            self.dash_cooldown -= dt
+        if self.invincible_timer > 0:
+            self.invincible_timer -= dt
 
-    def update_shield(self, dt):
-        self.orb_angle += dt * 2.0
+        if self.dashing:
+            self.dash_timer -= dt
+            if self.dash_timer <= 0:
+                self.dashing = False
+            else:
+                self.x += self.dash_dx * self.dash_speed * dt
+                self.y += self.dash_dy * self.dash_speed * dt
+        else:
+            dx, dy = 0, 0
+            if keys[pygame.K_w] or keys[pygame.K_UP]:
+                dy -= 1
+            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                dy += 1
+            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                dx -= 1
+            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                dx += 1
+            if dx != 0 and dy != 0:
+                n = math.sqrt(2)
+                dx /= n
+                dy /= n
+            self.x += dx * self.speed * dt
+            self.y += dy * self.speed * dt
 
-    def draw(self, screen):
-        color = (100, 200, 255) if not self.dashing else (255, 255, 100)
-        pygame.draw.rect(screen, color, self.rect)
-        # Direction indicator
-        cx, cy = self.rect.center
-        ex = cx + math.cos(math.radians(self.angle)) * 16
-        ey = cy + math.sin(math.radians(self.angle)) * 16
-        pygame.draw.line(screen, (200, 240, 255), (cx, cy), (int(ex), int(ey)), 3)
-        # Shield orbs
-        for ox, oy in self.get_orb_positions():
-            pygame.draw.circle(screen, (100, 255, 200), (int(cx + ox), int(cy + oy)), 7)
-        # HP bar
-        bar_w = 30
-        bar_h = 5
-        ratio = max(0, self.hp / self.max_hp)
-        pygame.draw.rect(screen, (180, 30, 30), (self.rect.x, self.rect.y - 10, bar_w, bar_h))
-        pygame.draw.rect(screen, (50, 220, 50), (self.rect.x, self.rect.y - 10, int(bar_w * ratio), bar_h))
+        self.x = max(arena_rect.left + self.radius, min(arena_rect.right - self.radius, self.x))
+        self.y = max(arena_rect.top + self.radius, min(arena_rect.bottom - self.radius, self.y))
+
+        if self.shield_orb:
+            self.shield_orb_angle += 2.0 * dt
+            if self.shield_orb_angle > math.pi * 2:
+                self.shield_orb_angle -= math.pi * 2
+
+    def shoot(self, mx, my):
+        from projectiles import Bullet, PiercingBullet
+        dx = mx - self.x
+        dy = my - self.y
+        dist = math.hypot(dx, dy)
+        if dist == 0:
+            return []
+        dx /= dist
+        dy /= dist
+        bullets = []
+        angles = [0]
+        if self.multishot >= 2:
+            angles = [-0.2, 0.2]
+        if self.multishot >= 3:
+            angles = [-0.3, 0, 0.3]
+        if self.multishot >= 4:
+            angles = [-0.35, -0.12, 0.12, 0.35]
+        base_angle = math.atan2(dy, dx)
+        for a in angles:
+            ang = base_angle + a
+            bdx = math.cos(ang)
+            bdy = math.sin(ang)
+            if self.piercing:
+                b = PiercingBullet(self.x, self.y, bdx, bdy, self.bullet_speed, self.damage)
+            else:
+                b = Bullet(self.x, self.y, bdx, bdy, self.bullet_speed, self.damage)
+            bullets.append(b)
+        return bullets
+
+    def draw(self, screen, mx, my):
+        if self.shield_orb:
+            orb_x = int(self.x + math.cos(self.shield_orb_angle) * 50)
+            orb_y = int(self.y + math.sin(self.shield_orb_angle) * 50)
+            pygame.draw.circle(screen, (80, 200, 255), (orb_x, orb_y), 12)
+            pygame.draw.circle(screen, (180, 240, 255), (orb_x, orb_y), 12, 2)
+
+        color = (80, 200, 120)
+        if self.dashing:
+            color = (180, 255, 200)
+        if self.invincible_timer > 0 and not self.dashing:
+            color = (200, 200, 80)
+
+        pygame.draw.circle(screen, (30, 80, 50), (int(self.x) + 2, int(self.y) + 2), self.radius)
+        pygame.draw.circle(screen, color, (int(self.x), int(self.y)), self.radius)
+        pygame.draw.circle(screen, (150, 255, 180), (int(self.x), int(self.y)), self.radius, 2)
+
+        angle = math.atan2(my - self.y, mx - self.x)
+        ex = self.x + math.cos(angle) * (self.radius + 6)
+        ey = self.y + math.sin(angle) * (self.radius + 6)
+        pygame.draw.line(screen, (200, 255, 200), (int(self.x), int(self.y)), (int(ex), int(ey)), 3)
+
+        # Dash cooldown arc
+        if self.dash_cooldown > 0:
+            fraction = self.dash_cooldown / self.dash_max_cooldown
+            rect = pygame.Rect(int(self.x) - self.radius, int(self.y) - self.radius, self.radius * 2, self.radius * 2)
+            end_angle = -math.pi / 2 + fraction * 2 * math.pi
+            pygame.draw.arc(screen, (100, 100, 200), rect, -math.pi / 2, end_angle if end_angle > -math.pi / 2 else -math.pi / 2 + 0.01, 3)
