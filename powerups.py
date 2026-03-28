@@ -1,45 +1,89 @@
 import random
 
-POWERUP_DEFS = [
-    {"id": "damage",       "name": "Damage Up",     "desc": "+25% bullet damage",    "color": (255, 80, 80),   "icon": "D"},
-    {"id": "fire_rate",    "name": "Rapid Fire",     "desc": "-25% fire interval",    "color": (255, 160, 40),  "icon": "R"},
-    {"id": "speed",        "name": "Speed Boost",    "desc": "+20% move speed",       "color": (80, 200, 255),  "icon": "S"},
-    {"id": "multishot",    "name": "Multishot",      "desc": "+1 bullet per shot",    "color": (200, 80, 255),  "icon": "M"},
-    {"id": "piercing",     "name": "Piercing",       "desc": "Bullets pierce enemies","color": (80, 255, 180),  "icon": "P"},
-    {"id": "health",       "name": "Heal",           "desc": "Restore 40 HP",         "color": (80, 255, 80),   "icon": "H"},
-    {"id": "max_hp",       "name": "Vitality",       "desc": "+30 max HP",            "color": (40, 200, 100),  "icon": "V"},
-    {"id": "shield",       "name": "Shield Orb",     "desc": "+1 shield orb",         "color": (100, 200, 255), "icon": "O"},
-    {"id": "dash_cd",      "name": "Quick Dash",     "desc": "-30% dash cooldown",    "color": (255, 220, 80),  "icon": "Q"},
-]
+class PowerUp:
+    def __init__(self, name, description):
+        self.name = name
+        self.description = description
+    
+    def apply(self, player):
+        pass
 
-class PowerUpManager:
+class DamageUp(PowerUp):
     def __init__(self):
-        self.pool = POWERUP_DEFS[:]
+        super().__init__("Damage Up", "+5 damage")
+    
+    def apply(self, player):
+        player.damage += 5
 
-    def get_choices(self, n):
-        if len(self.pool) >= n:
-            return random.sample(self.pool, n)
-        else:
-            return random.choices(self.pool, k=n)
+class FireRateUp(PowerUp):
+    def __init__(self):
+        super().__init__("Fire Rate Up", "+2 fire rate")
+    
+    def apply(self, player):
+        player.fire_rate += 2
 
-    def apply(self, powerup, player):
-        pid = powerup["id"]
-        if pid == "damage":
-            player.damage = int(player.damage * 1.25)
-        elif pid == "fire_rate":
-            player.fire_rate = max(0.05, player.fire_rate * 0.75)
-        elif pid == "speed":
-            player.speed = int(player.speed * 1.2)
-        elif pid == "multishot":
-            player.multishot += 1
-        elif pid == "piercing":
-            player.piercing = True
-        elif pid == "health":
-            player.hp = min(player.max_hp, player.hp + 40)
-        elif pid == "max_hp":
-            player.max_hp += 30
-            player.hp += 30
-        elif pid == "shield":
-            player.shield_orbs += 1
-        elif pid == "dash_cd":
-            player.dash_cooldown = max(0.2, player.dash_cooldown * 0.7)
+class SpeedUp(PowerUp):
+    def __init__(self):
+        super().__init__("Speed Up", "+50 movement speed")
+    
+    def apply(self, player):
+        player.speed += 50
+
+class MultiShot(PowerUp):
+    def __init__(self):
+        super().__init__("MultiShot", "Fire 3 bullets")
+    
+    def apply(self, player):
+        player.multishot = 3
+
+class Piercing(PowerUp):
+    def __init__(self):
+        super().__init__("Piercing Shots", "Bullets pierce enemies")
+    
+    def apply(self, player):
+        player.piercing = 1
+
+class HealthRestore(PowerUp):
+    def __init__(self):
+        super().__init__("Heal", "+40 HP")
+    
+    def apply(self, player):
+        player.heal(40)
+
+class MaxHealthUp(PowerUp):
+    def __init__(self):
+        super().__init__("Max HP Up", "+20 max HP")
+    
+    def apply(self, player):
+        player.max_health += 20
+        player.health = player.max_health
+
+class ShieldOrb(PowerUp):
+    def __init__(self):
+        super().__init__("Shield Orb", "Gain 30 shield")
+    
+    def apply(self, player):
+        player.shield_timer = player.shield_max_timer
+        player.shield_health = 30
+        player.shield_orb_active = True
+
+class DashRecharge(PowerUp):
+    def __init__(self):
+        super().__init__("Dash Recharge", "Dash recharges faster")
+    
+    def apply(self, player):
+        player.dash_cooldown = 0.5
+
+def get_power_up_cards():
+    all_ups = [
+        DamageUp(),
+        FireRateUp(),
+        SpeedUp(),
+        MultiShot(),
+        Piercing(),
+        HealthRestore(),
+        MaxHealthUp(),
+        ShieldOrb(),
+        DashRecharge()
+    ]
+    return random.sample(all_ups, 3)
