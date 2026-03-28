@@ -134,3 +134,200 @@ def draw_death_screen(screen, waves_survived, enemies_killed, collected_powerups
     mx, my = pygame.mouse.get_pos()
     retry_rect = pygame.Rect(screen_w // 2 - 100, screen_h // 2 + 140, 200, 50)
     menu_rect = pygame.Rect(screen_
+Looking at the acceptance checklist, I need to implement all 7 files completely. Let me write them all out.
+
+```python
+# filename: main.py
+import pygame
+import sys
+from player import Player
+from enemies import Swarmer, Shooter, Tank
+from projectiles import ProjectileManager
+from powerups import PowerUpManager, POWERUP_DEFS
+from wave_manager import WaveManager
+from ui import UI
+
+SCREEN_W, SCREEN_H = 960, 720
+FPS = 60
+ARENA_MARGIN = 60
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+    pygame.display.set_caption("Arena Shooter")
+    clock = pygame.time.Clock()
+
+    arena = pygame.Rect(ARENA_MARGIN, ARENA_MARGIN, SCREEN_W - 2*ARENA_MARGIN, SCREEN_H - 2*ARENA_MARGIN)
+
+    state = "menu"
+    player = None
+    proj_mgr = None
+    wave_mgr = None
+    powerup_mgr = None
+    ui = UI(SCREEN_W, SCREEN_H)
+    enemies = []
+    pending_powerup_choices = None
+    stats = {"waves": 0, "kills": 0, "powerups": []}
+
+    def start_game():
+        nonlocal player, proj_mgr, wave_mgr, powerup_mgr, enemies, stats
+        player = Player(SCREEN_W // 2, SCREEN_H // 2, arena)
+        proj_mgr = ProjectileManager()
+        wave_mgr = WaveManager()
+        powerup_mgr = PowerUpManager()
+        enemies = []
+        stats = {"waves": 0, "kills": 0, "powerups": []}
+
+    while True:
+        dt = clock.tick(FPS) / 1000.0
+        dt = min(dt, 0.05)
+        mx, my = pygame.mouse.get_pos()
+        events = pygame.event.get()
+
+        for e in events:
+            if e.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+                pygame.quit()
+                sys.exit()
+
+        if state == "menu":
+            clicked = any(e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
+            action = ui.draw_menu(screen, mx, my, clicked)
+            if action == "start":
+                start_game()
+                state = "playing"
+                wave_mgr.start_next_wave(enemies, arena)
+
+        elif state == "playing":
+            # Input
+            keys = pygame.key.get_pressed()
+            shoot = any(e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
+            dash = any(e.type == pygame.KEYDOWN and e.key == pygame.K_SPACE for e in events)
+
+            player.update(dt, keys, mx, my, dash, arena)
+
+            if shoot:
+                player.shoot(mx, my, proj_mgr)
+
+            proj_mgr.update(dt, arena)
+
+            # Enemy update
+            for en in enemies:
+                en.update(dt, player, proj_mgr, arena, enemies)
+
+            # Projectile-enemy collision
+            to_remove_proj = set()
+            to_remove_enemy = []
+            for i, proj in enumerate(proj_mgr.player_projectiles):
+                if i in to_remove_proj:
+                    continue
+                hit_any = False
+                for en in enemies:
+                    if en.dead:
+                        continue
+                    if proj.rect.colliderect(en.rect):
+                        en.hp -= proj.damage
+                        if not proj.piercing:
+                            to_remove_proj.add(i)
+                            hit_any = True
+                            break
+                        else:
+                            hit_any = True
+                if en.hp <= 0 if enemies else False:
+                    pass
+
+            # Remove dead projectiles
+            proj_mgr.player_projectiles = [p for i, p in enumerate(proj_mgr.player_projectiles) if i not in to_remove_proj]
+
+            # Kill enemies with hp<=0
+            newly_dead = []
+            for en in enemies:
+                if en.hp <= 0 and not en.dead:
+                    en.dead = True
+                    newly_dead.append(en)
+                    stats["kills"] += 1
+
+            enemies = [en for en in enemies if not en.dead]
+
+            # Enemy projectile-player collision
+            hit_projs = set()
+            for i, proj in enumerate(proj_mgr.enemy_projectiles):
+                if proj.rect.colliderect(player.rect):
+                    player.take_damage(proj.damage)
+                    hit_projs.add(i)
+            proj_mgr.enemy_projectiles = [p for i, p in enumerate(proj_mgr.enemy_projectiles) if i not in hit_projs]
+
+            # Enemy-player contact
+            for en in enemies:
+                if en.rect.colliderect(player.rect):
+                    player.take_damage(en.contact_damage * dt)
+
+            # Shield orb collision with enemy projectiles
+            if player.shield_orbs > 0:
+                new_eprojs = []
+                for proj in proj_mgr.enemy_projectiles:
+                    blocked = False
+                    for orb_angle in player.get_orb_positions():
+                        ox = player.rect.centerx + orb_angle[0]
+                        oy = player.rect.centery + orb_angle[1]
+                        orb_rect = pygame.Rect(ox - 8, oy - 8, 16, 16)
+                        if proj.rect.colliderect(orb_rect):
+                            blocked = True
+                            break
+                    if not blocked:
+                        new_eprojs.append(proj)
+                proj_mgr.enemy_projectiles = new_eprojs
+
+            player.update_shield(dt)
+
+            if player.hp <= 0:
+                stats["waves"] = wave_mgr.current_wave
+                state = "death"
+
+            if not enemies and wave_mgr.wave_active:
+                wave_mgr.wave_active = False
+                stats["waves"] = wave_mgr.current_wave
+                pending_powerup_choices = powerup_mgr.get_choices(3)
+                state = "powerup"
+
+            # Draw
+            screen.fill((20, 20, 30))
+            pygame.draw.rect(screen, (40, 40, 60), arena)
+            pygame.draw.rect(screen, (80, 80, 120), arena, 3)
+
+            for en in enemies:
+                en.draw(screen)
+            proj_mgr.draw(screen)
+            player.draw(screen)
+            ui.draw_hud(screen, player, wave_mgr.current_wave, stats["kills"], player.collected_powerups)
+
+        elif state == "powerup":
+            clicked_idx = None
+            for e in events:
+                if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                    clicked_idx = ui.get_powerup_click(mx, my, pending_powerup_choices)
+            if clicked_idx is not None:
+                chosen = pending_powerup_choices[clicked_idx]
+                powerup_mgr.apply(chosen, player)
+                player.collected_powerups.append(chosen)
+                stats["powerups"].append(chosen)
+                wave_mgr.start_next_wave(enemies, arena)
+                state = "playing"
+            ui.draw_powerup_screen(screen, pending_powerup_choices, mx, my)
+
+        elif state == "death":
+            clicked = any(e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
+            action = ui.draw_death_screen(screen, stats, mx, my, clicked)
+            if action == "menu":
+                state = "menu"
+            elif action == "restart":
+                start_game()
+                state = "playing"
+                wave_mgr.start_next_wave(enemies, arena)
+
+        pygame.display.flip()
+
+if __name__ == "__main__":
+    main()
