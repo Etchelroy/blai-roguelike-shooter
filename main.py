@@ -1,265 +1,257 @@
 import pygame
 import sys
 import math
+import random
 from player import Player
 from enemies import Swarmer, Shooter, Tank
-from projectiles import Bullet, EnemyBullet
-from powerups import POWERUP_DEFS, apply_powerup
-from ui import draw_hud, draw_main_menu, draw_death_screen, draw_card_selection
+from projectiles import Bullet, EnemyBullet, PiercingBullet
+from powerups import PowerUp, get_power_up_cards
+from ui import render_main_menu, render_hud, render_death_screen, render_card_select
 from wave_manager import WaveManager
 
 pygame.init()
 
-SCREEN_W, SCREEN_H = 1280, 720
-screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-pygame.display.set_caption("Roguelike Shooter")
+SCREEN_WIDTH = 1280
+SCREEN_HEIGHT = 720
+ARENA_WIDTH = 1200
+ARENA_HEIGHT = 600
+ARENA_X = 40
+ARENA_Y = 60
+
+FPS = 60
 clock = pygame.time.Clock()
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("Roguelike Shooter")
 
-ARENA_MARGIN = 60
-ARENA_RECT = pygame.Rect(ARENA_MARGIN, ARENA_MARGIN + 40, SCREEN_W - ARENA_MARGIN * 2, SCREEN_H - ARENA_MARGIN * 2 - 40)
+# Game states
+STATE_MENU = 0
+STATE_PLAYING = 1
+STATE_WAVE_COMPLETE = 2
+STATE_DEAD = 3
 
-STATE_MENU = "menu"
-STATE_PLAYING = "playing"
-STATE_CARD_SELECT = "card_select"
-STATE_DEATH = "death"
-
-def run_game():
-    state = STATE_MENU
-    player = None
-    enemies = []
-    player_bullets = []
-    enemy_bullets = []
-    wave_manager = None
-    selected_cards = []
-    enemies_killed = 0
-    shoot_timer = 0.0
-    spawn_timer = 0.0
-
-    menu_start_rect = pygame.Rect(SCREEN_W // 2 - 100, SCREEN_H // 2, 200, 50)
-    menu_quit_rect = pygame.Rect(SCREEN_W // 2 - 100, SCREEN_H // 2 + 70, 200, 50)
-
-    def reset_game():
-        nonlocal player, enemies, player_bullets, enemy_bullets, wave_manager, enemies_killed, shoot_timer, spawn_timer
-        player = Player(SCREEN_W // 2, SCREEN_H // 2)
-        enemies = []
-        player_bullets = []
-        enemy_bullets = []
-        wave_manager = WaveManager()
-        enemies_killed = 0
-        shoot_timer = 0.0
-        spawn_timer = 0.0
-
-    running = True
-    while running:
-        dt = clock.tick(60) / 1000.0
-        dt = min(dt, 0.05)
-        mx, my = pygame.mouse.get_pos()
-
+class Game:
+    def __init__(self):
+        self.state = STATE_MENU
+        self.player = None
+        self.enemies = []
+        self.player_bullets = []
+        self.enemy_bullets = []
+        self.wave_manager = None
+        self.wave_num = 0
+        self.enemies_killed = 0
+        self.power_ups_collected = []
+        self.card_options = []
+        self.selected_card = None
+        
+    def start_new_game(self):
+        self.player = Player(ARENA_WIDTH // 2 + ARENA_X, ARENA_HEIGHT // 2 + ARENA_Y)
+        self.enemies = []
+        self.player_bullets = []
+        self.enemy_bullets = []
+        self.wave_manager = WaveManager()
+        self.wave_num = 0
+        self.enemies_killed = 0
+        self.power_ups_collected = []
+        self.state = STATE_PLAYING
+        self.spawn_wave()
+        
+    def spawn_wave(self):
+        self.wave_num += 1
+        wave_data = self.wave_manager.get_wave(self.wave_num)
+        self.enemies = []
+        for enemy_type, count in wave_data.items():
+            for _ in range(count):
+                x = random.randint(ARENA_X + 50, ARENA_X + ARENA_WIDTH - 50)
+                y = random.randint(ARENA_Y + 50, ARENA_Y + ARENA_HEIGHT - 50)
+                # Ensure enemy doesn't spawn too close to player
+                while math.hypot(x - self.player.x, y - self.player.y) < 150:
+                    x = random.randint(ARENA_X + 50, ARENA_X + ARENA_WIDTH - 50)
+                    y = random.randint(ARENA_Y + 50, ARENA_Y + ARENA_HEIGHT - 50)
+                
+                if enemy_type == "swarmer":
+                    self.enemies.append(Swarmer(x, y))
+                elif enemy_type == "shooter":
+                    self.enemies.append(Shooter(x, y))
+                elif enemy_type == "tank":
+                    self.enemies.append(Tank(x, y))
+    
+    def show_card_select(self):
+        self.card_options = get_power_up_cards()
+        self.selected_card = None
+        self.state = STATE_WAVE_COMPLETE
+    
+    def apply_power_up(self, card_idx):
+        if 0 <= card_idx < len(self.card_options):
+            pu = self.card_options[card_idx]
+            pu.apply(self.player)
+            self.power_ups_collected.append(pu.name)
+        self.state = STATE_PLAYING
+        self.spawn_wave()
+    
+    def player_died(self):
+        self.state = STATE_DEAD
+    
+    def update(self, dt):
+        if self.state == STATE_PLAYING:
+            self.player.update(dt, self.enemies)
+            
+            # Player shooting
+            new_bullets = self.player.get_fired_bullets()
+            self.player_bullets.extend(new_bullets)
+            
+            # Update player bullets
+            for bullet in self.player_bullets[:]:
+                bullet.update(dt)
+                if bullet.x < ARENA_X or bullet.x > ARENA_X + ARENA_WIDTH or \
+                   bullet.y < ARENA_Y or bullet.y > ARENA_Y + ARENA_HEIGHT:
+                    self.player_bullets.remove(bullet)
+            
+            # Update enemies
+            for enemy in self.enemies[:]:
+                enemy.update(dt, self.player)
+                new_enemy_bullets = enemy.get_fired_bullets()
+                self.enemy_bullets.extend(new_enemy_bullets)
+                
+                # Check collision with player bullets
+                for bullet in self.player_bullets[:]:
+                    if math.hypot(bullet.x - enemy.x, bullet.y - enemy.y) < enemy.radius + 5:
+                        enemy.take_damage(bullet.damage)
+                        if not isinstance(bullet, PiercingBullet):
+                            if bullet in self.player_bullets:
+                                self.player_bullets.remove(bullet)
+                        if enemy.health <= 0:
+                            self.enemies.remove(enemy)
+                            self.enemies_killed += 1
+                        break
+            
+            # Update enemy bullets
+            for bullet in self.enemy_bullets[:]:
+                bullet.update(dt)
+                if bullet.x < ARENA_X or bullet.x > ARENA_X + ARENA_WIDTH or \
+                   bullet.y < ARENA_Y or bullet.y > ARENA_Y + ARENA_HEIGHT:
+                    self.enemy_bullets.remove(bullet)
+            
+            # Check collision between player and enemy bullets
+            for bullet in self.enemy_bullets[:]:
+                if math.hypot(bullet.x - self.player.x, bullet.y - self.player.y) < self.player.radius + 5:
+                    self.player.take_damage(bullet.damage)
+                    self.enemy_bullets.remove(bullet)
+                    if self.player.health <= 0:
+                        self.player_died()
+            
+            # Check collision between player and enemies
+            for enemy in self.enemies[:]:
+                if math.hypot(self.player.x - enemy.x, self.player.y - enemy.y) < self.player.radius + enemy.radius:
+                    self.player.take_damage(1)
+                    if self.player.health <= 0:
+                        self.player_died()
+            
+            # Check if wave complete
+            if len(self.enemies) == 0:
+                self.show_card_select()
+    
+    def handle_input(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
-
-            if state == STATE_MENU:
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if menu_start_rect.collidepoint(mx, my):
-                        reset_game()
-                        wave_manager.start_next_wave()
-                        enemies = wave_manager.spawn_enemies(ARENA_RECT)
-                        state = STATE_PLAYING
-                    elif menu_quit_rect.collidepoint(mx, my):
-                        running = False
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
-                    reset_game()
-                    wave_manager.start_next_wave()
-                    enemies = wave_manager.spawn_enemies(ARENA_RECT)
-                    state = STATE_PLAYING
-
-            elif state == STATE_PLAYING:
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                    player.try_dash(mx, my)
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    bullets = player.shoot(mx, my)
-                    player_bullets.extend(bullets)
-
-            elif state == STATE_CARD_SELECT:
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    card_rects = get_card_rects()
-                    for i, rect in enumerate(card_rects):
-                        if rect.collidepoint(mx, my) and i < len(selected_cards):
-                            apply_powerup(player, selected_cards[i])
-                            player_bullets = []
-                            enemy_bullets = []
-                            enemies = []
-                            wave_manager.start_next_wave()
-                            enemies = wave_manager.spawn_enemies(ARENA_RECT)
-                            state = STATE_PLAYING
-                            break
-
-            elif state == STATE_DEATH:
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    dr = pygame.Rect(SCREEN_W // 2 - 100, SCREEN_H // 2 + 140, 200, 50)
-                    mr = pygame.Rect(SCREEN_W // 2 - 100, SCREEN_H // 2 + 200, 200, 50)
-                    if dr.collidepoint(mx, my):
-                        reset_game()
-                        wave_manager.start_next_wave()
-                        enemies = wave_manager.spawn_enemies(ARENA_RECT)
-                        state = STATE_PLAYING
-                    elif mr.collidepoint(mx, my):
-                        state = STATE_MENU
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_r:
-                        reset_game()
-                        wave_manager.start_next_wave()
-                        enemies = wave_manager.spawn_enemies(ARENA_RECT)
-                        state = STATE_PLAYING
-                    elif event.key == pygame.K_ESCAPE:
-                        state = STATE_MENU
-
-        if state == STATE_PLAYING:
-            keys = pygame.key.get_pressed()
-            player.update(dt, keys, ARENA_RECT)
-
-            shoot_timer += dt
-            fire_interval = 1.0 / player.fire_rate
-            if pygame.mouse.get_pressed()[0] and shoot_timer >= fire_interval:
-                bullets = player.shoot(mx, my)
-                player_bullets.extend(bullets)
-                shoot_timer = 0.0
-
-            for b in player_bullets:
-                b.update(dt)
-            for b in enemy_bullets:
-                b.update(dt)
-
-            for e in enemies:
-                result = e.update(dt, player, ARENA_RECT)
-                if result:
-                    enemy_bullets.extend(result)
-
-            # Player bullets vs enemies
-            bullets_to_remove = set()
-            enemies_to_remove = set()
-            for bi, b in enumerate(player_bullets):
-                if not ARENA_RECT.collidepoint(b.x, b.y):
-                    bullets_to_remove.add(bi)
-                    continue
-                for ei, e in enumerate(enemies):
-                    if math.hypot(b.x - e.x, b.y - e.y) < e.radius + b.radius:
-                        e.hp -= b.damage
-                        if not b.piercing:
-                            bullets_to_remove.add(bi)
-                        if e.hp <= 0:
-                            enemies_to_remove.add(ei)
-                            enemies_killed += 1
-
-            player_bullets = [b for i, b in enumerate(player_bullets) if i not in bullets_to_remove]
-            enemies = [e for i, e in enumerate(enemies) if i not in enemies_to_remove]
-
-            # Enemy bullets vs player
-            ebs_to_remove = set()
-            for bi, b in enumerate(enemy_bullets):
-                if not ARENA_RECT.collidepoint(b.x, b.y):
-                    ebs_to_remove.add(bi)
-                    continue
-                if math.hypot(b.x - player.x, b.y - player.y) < player.radius + b.radius:
-                    if not player.dashing:
-                        player.take_damage(b.damage)
-                    ebs_to_remove.add(bi)
-            enemy_bullets = [b for i, b in enumerate(enemy_bullets) if i not in ebs_to_remove]
-
-            # Enemy contact with player
-            for e in enemies:
-                dist = math.hypot(e.x - player.x, e.y - player.y)
-                if dist < e.radius + player.radius:
-                    if not player.dashing:
-                        player.take_damage(e.contact_damage * dt)
-
-            # Shield orb collision
-            if player.shield_orb:
-                orb_angle = player.shield_orb_angle
-                orb_x = player.x + math.cos(orb_angle) * 50
-                orb_y = player.y + math.sin(orb_angle) * 50
-                orb_r = 12
-                ebs_to_remove2 = set()
-                for bi, b in enumerate(enemy_bullets):
-                    if math.hypot(b.x - orb_x, b.y - orb_y) < orb_r + b.radius:
-                        ebs_to_remove2.add(bi)
-                enemy_bullets = [b for i, b in enumerate(enemy_bullets) if i not in ebs_to_remove2]
-                enemies_to_remove2 = set()
-                for ei, e in enumerate(enemies):
-                    if math.hypot(e.x - orb_x, e.y - orb_y) < orb_r + e.radius:
-                        e.hp -= 15 * dt
-                        if e.hp <= 0:
-                            enemies_to_remove2.add(ei)
-                            enemies_killed += 1
-                enemies = [e for i, e in enumerate(enemies) if i not in enemies_to_remove2]
-
-            if player.hp <= 0:
-                state = STATE_DEATH
-
-            if len(enemies) == 0 and wave_manager.wave_complete():
-                selected_cards = wave_manager.pick_cards(3)
-                state = STATE_CARD_SELECT
-
-        screen.fill((15, 15, 25))
-
-        if state == STATE_MENU:
-            draw_main_menu(screen, SCREEN_W, SCREEN_H, menu_start_rect, menu_quit_rect)
-
-        elif state == STATE_PLAYING:
-            draw_arena(screen, ARENA_RECT)
-            for e in enemies:
-                e.draw(screen)
-            for b in enemy_bullets:
-                b.draw(screen)
-            for b in player_bullets:
-                b.draw(screen)
-            player.draw(screen, mx, my)
-            draw_hud(screen, player, wave_manager, SCREEN_W, clock)
-
-        elif state == STATE_CARD_SELECT:
-            draw_arena(screen, ARENA_RECT)
-            draw_hud(screen, player, wave_manager, SCREEN_W, clock)
-            draw_card_selection(screen, selected_cards, SCREEN_W, SCREEN_H, get_card_rects())
-
-        elif state == STATE_DEATH:
-            draw_death_screen(screen, wave_manager.wave_number - 1, enemies_killed, player.collected_powerups, SCREEN_W, SCREEN_H)
-
-        draw_crosshair(screen, mx, my)
+                return False
+            
+            if event.type == pygame.KEYDOWN:
+                if self.state == STATE_MENU:
+                    if event.key == pygame.K_RETURN:
+                        self.start_new_game()
+                
+                elif self.state == STATE_PLAYING:
+                    if event.key == pygame.K_SPACE:
+                        self.player.dash()
+                
+                elif self.state == STATE_WAVE_COMPLETE:
+                    if event.key == pygame.K_1:
+                        self.apply_power_up(0)
+                    elif event.key == pygame.K_2:
+                        self.apply_power_up(1)
+                    elif event.key == pygame.K_3:
+                        self.apply_power_up(2)
+                
+                elif self.state == STATE_DEAD:
+                    if event.key == pygame.K_RETURN:
+                        self.state = STATE_MENU
+        
+        return True
+    
+    def draw(self):
+        screen.fill((20, 20, 20))
+        
+        # Draw arena border
+        pygame.draw.rect(screen, (100, 100, 100), (ARENA_X, ARENA_Y, ARENA_WIDTH, ARENA_HEIGHT), 2)
+        
+        if self.state == STATE_MENU:
+            render_main_menu(screen, SCREEN_WIDTH, SCREEN_HEIGHT)
+        
+        elif self.state == STATE_PLAYING:
+            # Draw player
+            pygame.draw.circle(screen, (0, 200, 100), (int(self.player.x), int(self.player.y)), self.player.radius)
+            
+            # Draw dash effect
+            if self.player.dash_time > 0:
+                alpha = int(100 * (self.player.dash_time / self.player.dash_duration))
+                s = pygame.Surface((self.player.radius * 2, self.player.radius * 2))
+                s.set_alpha(alpha)
+                s.fill((150, 255, 150))
+                screen.blit(s, (int(self.player.x - self.player.radius), int(self.player.y - self.player.radius)))
+            
+            # Draw shield orb
+            if self.player.shield_timer > 0:
+                pygame.draw.circle(screen, (100, 150, 255), (int(self.player.x), int(self.player.y)), self.player.radius + 10, 2)
+            
+            # Draw player bullets
+            for bullet in self.player_bullets:
+                pygame.draw.circle(screen, (255, 200, 50), (int(bullet.x), int(bullet.y)), 3)
+            
+            # Draw enemies
+            for enemy in self.enemies:
+                color = (255, 100, 100)
+                if enemy.__class__.__name__ == "Shooter":
+                    color = (255, 150, 50)
+                elif enemy.__class__.__name__ == "Tank":
+                    color = (150, 50, 50)
+                pygame.draw.circle(screen, color, (int(enemy.x), int(enemy.y)), enemy.radius)
+                # Draw health bar above enemy
+                bar_width = 20
+                bar_height = 3
+                bar_x = int(enemy.x - bar_width / 2)
+                bar_y = int(enemy.y - enemy.radius - 10)
+                pygame.draw.rect(screen, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
+                fill_width = int((enemy.health / enemy.max_health) * bar_width)
+                pygame.draw.rect(screen, (0, 255, 0), (bar_x, bar_y, fill_width, bar_height))
+            
+            # Draw enemy bullets
+            for bullet in self.enemy_bullets:
+                pygame.draw.circle(screen, (255, 50, 50), (int(bullet.x), int(bullet.y)), 2)
+            
+            # Draw HUD
+            render_hud(screen, self.player, self.wave_num, self.power_ups_collected)
+        
+        elif self.state == STATE_WAVE_COMPLETE:
+            render_card_select(screen, SCREEN_WIDTH, SCREEN_HEIGHT, self.card_options)
+        
+        elif self.state == STATE_DEAD:
+            render_death_screen(screen, SCREEN_WIDTH, SCREEN_HEIGHT, self.wave_num - 1, 
+                              self.enemies_killed, self.power_ups_collected)
+        
         pygame.display.flip()
 
+def main():
+    game = Game()
+    running = True
+    
+    while running:
+        running = game.handle_input()
+        dt = clock.tick(FPS) / 1000.0
+        game.update(dt)
+        game.draw()
+    
     pygame.quit()
     sys.exit()
 
-def get_card_rects():
-    card_w, card_h = 220, 300
-    gap = 40
-    total_w = 3 * card_w + 2 * gap
-    start_x = (SCREEN_W - total_w) // 2
-    y = (SCREEN_H - card_h) // 2
-    rects = []
-    for i in range(3):
-        rects.append(pygame.Rect(start_x + i * (card_w + gap), y, card_w, card_h))
-    return rects
-
-def draw_arena(screen, arena_rect):
-    pygame.draw.rect(screen, (20, 20, 35), arena_rect)
-    for x in range(arena_rect.left, arena_rect.right, 60):
-        pygame.draw.line(screen, (25, 25, 45), (x, arena_rect.top), (x, arena_rect.bottom))
-    for y in range(arena_rect.top, arena_rect.bottom, 60):
-        pygame.draw.line(screen, (25, 25, 45), (arena_rect.left, y), (arena_rect.right, y))
-    pygame.draw.rect(screen, (80, 80, 120), arena_rect, 3)
-
-def draw_crosshair(screen, mx, my):
-    size = 10
-    gap = 4
-    color = (220, 220, 220)
-    pygame.draw.line(screen, color, (mx - size - gap, my), (mx - gap, my), 2)
-    pygame.draw.line(screen, color, (mx + gap, my), (mx + size + gap, my), 2)
-    pygame.draw.line(screen, color, (mx, my - size - gap), (mx, my - gap), 2)
-    pygame.draw.line(screen, color, (mx, my + gap), (mx, my + size + gap), 2)
-    pygame.draw.circle(screen, color, (mx, my), 2)
-
 if __name__ == "__main__":
-    pygame.mouse.set_visible(False)
-    run_game()
+    main()
