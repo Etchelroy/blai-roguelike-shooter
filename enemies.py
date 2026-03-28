@@ -2,133 +2,154 @@ import pygame
 import math
 import random
 
-class BaseEnemy:
-    dead = False
-    contact_damage = 10
-
-    def draw(self, screen):
-        pygame.draw.rect(screen, self.color, self.rect)
-        bar_w = self.rect.width
-        ratio = max(0, self.hp / self.max_hp)
-        pygame.draw.rect(screen, (150, 20, 20), (self.rect.x, self.rect.y - 7, bar_w, 4))
-        pygame.draw.rect(screen, (50, 200, 50), (self.rect.x, self.rect.y - 7, int(bar_w * ratio), 4))
-
-
-class Swarmer(BaseEnemy):
+class Swarmer:
     def __init__(self, x, y):
-        self.rect = pygame.Rect(0, 0, 18, 18)
-        self.rect.center = (x, y)
-        self.hp = 30
-        self.max_hp = 30
-        self.speed = 180
+        self.x = float(x)
+        self.y = float(y)
+        self.radius = 10
+        self.speed = 160.0
+        self.hp = 30.0
+        self.max_hp = 30.0
+        self.contact_damage = 25.0
         self.color = (220, 80, 80)
-        self.contact_damage = 15
+        self.wobble = random.uniform(0, math.pi * 2)
 
-    def update(self, dt, player, proj_mgr, arena, enemies):
-        cx, cy = self.rect.center
-        px, py = player.rect.center
-        dx, dy = px - cx, py - cy
+    def update(self, dt, player, arena_rect):
+        dx = player.x - self.x
+        dy = player.y - self.y
         dist = math.hypot(dx, dy)
         if dist > 0:
             dx /= dist
             dy /= dist
-        self.rect.x += dx * self.speed * dt
-        self.rect.y += dy * self.speed * dt
-        _clamp(self.rect, arena)
+        self.wobble += dt * 3
+        perp_x = -dy
+        perp_y = dx
+        self.x += (dx + perp_x * math.sin(self.wobble) * 0.3) * self.speed * dt
+        self.y += (dy + perp_y * math.sin(self.wobble) * 0.3) * self.speed * dt
+        self.x = max(arena_rect.left + self.radius, min(arena_rect.right - self.radius, self.x))
+        self.y = max(arena_rect.top + self.radius, min(arena_rect.bottom - self.radius, self.y))
+        return None
+
+    def draw(self, screen):
+        hp_frac = self.hp / self.max_hp
+        draw_enemy_base(screen, self.x, self.y, self.radius, self.color, hp_frac)
+        pts = []
+        for i in range(6):
+            ang = i * math.pi / 3 + self.wobble * 0.5
+            px = self.x + math.cos(ang) * self.radius
+            py = self.y + math.sin(ang) * self.radius
+            pts.append((int(px), int(py)))
+        if len(pts) >= 3:
+            pygame.draw.polygon(screen, self.color, pts)
+            pygame.draw.polygon(screen, (255, 150, 150), pts, 2)
+        draw_hp_bar(screen, self.x, self.y, self.radius, hp_frac)
 
 
-class Shooter(BaseEnemy):
+class Shooter:
     def __init__(self, x, y):
-        self.rect = pygame.Rect(0, 0, 24, 24)
-        self.rect.center = (x, y)
-        self.hp = 60
-        self.max_hp = 60
-        self.speed = 80
+        self.x = float(x)
+        self.y = float(y)
+        self.radius = 14
+        self.speed = 80.0
+        self.hp = 60.0
+        self.max_hp = 60.0
+        self.contact_damage = 10.0
         self.color = (80, 80, 220)
-        self.fire_timer = random.uniform(1, 2)
-        self.fire_rate = 2.0
-        self.contact_damage = 8
-        self.preferred_dist = 300
+        self.shoot_timer = random.uniform(0, 2.0)
+        self.shoot_interval = 2.0
+        self.preferred_dist = 250.0
 
-    def update(self, dt, player, proj_mgr, arena, enemies):
-        cx, cy = self.rect.center
-        px, py = player.rect.center
-        dx, dy = px - cx, py - cy
+    def update(self, dt, player, arena_rect):
+        from projectiles import EnemyBullet
+        dx = player.x - self.x
+        dy = player.y - self.y
         dist = math.hypot(dx, dy)
         if dist > 0:
-            ndx, ndy = dx / dist, dy / dist
+            ndx = dx / dist
+            ndy = dy / dist
         else:
             ndx, ndy = 0, 0
 
         if dist < self.preferred_dist - 30:
-            self.rect.x -= ndx * self.speed * dt
-            self.rect.y -= ndy * self.speed * dt
+            self.x -= ndx * self.speed * dt
+            self.y -= ndy * self.speed * dt
         elif dist > self.preferred_dist + 30:
-            self.rect.x += ndx * self.speed * dt
-            self.rect.y += ndy * self.speed * dt
+            self.x += ndx * self.speed * dt
+            self.y += ndy * self.speed * dt
 
-        _clamp(self.rect, arena)
+        self.x = max(arena_rect.left + self.radius, min(arena_rect.right - self.radius, self.x))
+        self.y = max(arena_rect.top + self.radius, min(arena_rect.bottom - self.radius, self.y))
 
-        self.fire_timer -= dt
-        if self.fire_timer <= 0:
-            self.fire_timer = self.fire_rate
-            angle = math.atan2(py - cy, px - cx)
-            proj_mgr.spawn_enemy(cx, cy, angle, 12)
+        self.shoot_timer += dt
+        bullets = []
+        if self.shoot_timer >= self.shoot_interval:
+            self.shoot_timer = 0
+            if dist > 0:
+                b = EnemyBullet(self.x, self.y, ndx, ndy, 280.0, 12.0)
+                bullets.append(b)
+        return bullets if bullets else None
+
+    def draw(self, screen):
+        hp_frac = self.hp / self.max_hp
+        draw_enemy_base(screen, self.x, self.y, self.radius, self.color, hp_frac)
+        pygame.draw.rect(screen, self.color,
+                         (int(self.x) - self.radius, int(self.y) - self.radius,
+                          self.radius * 2, self.radius * 2))
+        pygame.draw.rect(screen, (150, 150, 255),
+                         (int(self.x) - self.radius, int(self.y) - self.radius,
+                          self.radius * 2, self.radius * 2), 2)
+        draw_hp_bar(screen, self.x, self.y, self.radius, hp_frac)
 
 
-class Tank(BaseEnemy):
+class Tank:
     def __init__(self, x, y):
-        self.rect = pygame.Rect(0, 0, 40, 40)
-        self.rect.center = (x, y)
-        self.hp = 200
-        self.max_hp = 200
-        self.speed = 55
-        self.color = (80, 180, 80)
-        self.contact_damage = 25
-        self.charge_timer = random.uniform(3, 5)
-        self.charging = False
-        self.charge_dir = (0, 0)
-        self.charge_speed = 350
-        self.charge_duration = 0
-        self.fire_timer = random.uniform(2, 4)
-        self.fire_rate = 3.5
+        self.x = float(x)
+        self.y = float(y)
+        self.radius = 26
+        self.speed = 50.0
+        self.hp = 250.0
+        self.max_hp = 250.0
+        self.contact_damage = 40.0
+        self.color = (160, 100, 40)
+        self.angle = 0.0
 
-    def update(self, dt, player, proj_mgr, arena, enemies):
-        cx, cy = self.rect.center
-        px, py = player.rect.center
-        dx, dy = px - cx, py - cy
+    def update(self, dt, player, arena_rect):
+        dx = player.x - self.x
+        dy = player.y - self.y
         dist = math.hypot(dx, dy)
-        ndx, ndy = (dx/dist, dy/dist) if dist > 0 else (0, 0)
+        if dist > 0:
+            dx /= dist
+            dy /= dist
+        self.x += dx * self.speed * dt
+        self.y += dy * self.speed * dt
+        self.angle += dt * 60
+        self.x = max(arena_rect.left + self.radius, min(arena_rect.right - self.radius, self.x))
+        self.y = max(arena_rect.top + self.radius, min(arena_rect.bottom - self.radius, self.y))
+        return None
 
-        self.fire_timer -= dt
-        if self.fire_timer <= 0:
-            self.fire_timer = self.fire_rate
-            for angle_offset in [-0.3, 0, 0.3]:
-                a = math.atan2(py - cy, px - cx) + angle_offset
-                proj_mgr.spawn_enemy(cx, cy, a, 18)
-
-        if self.charging:
-            self.charge_duration -= dt
-            self.rect.x += self.charge_dir[0] * self.charge_speed * dt
-            self.rect.y += self.charge_dir[1] * self.charge_speed * dt
-            _clamp(self.rect, arena)
-            if self.charge_duration <= 0:
-                self.charging = False
-                self.charge_timer = random.uniform(3, 5)
-        else:
-            self.charge_timer -= dt
-            if self.charge_timer <= 0:
-                self.charging = True
-                self.charge_dir = (ndx, ndy)
-                self.charge_duration = 0.4
-            else:
-                self.rect.x += ndx * self.speed * dt
-                self.rect.y += ndy * self.speed * dt
-                _clamp(self.rect, arena)
+    def draw(self, screen):
+        hp_frac = self.hp / self.max_hp
+        # Shadow
+        pygame.draw.circle(screen, (40, 25, 10), (int(self.x) + 3, int(self.y) + 3), self.radius)
+        pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        # Armor segments
+        for i in range(6):
+            ang = math.radians(self.angle + i * 60)
+            px = self.x + math.cos(ang) * (self.radius - 5)
+            py = self.y + math.sin(ang) * (self.radius - 5)
+            pygame.draw.circle(screen, (200, 150, 80), (int(px), int(py)), 6)
+        pygame.draw.circle(screen, (220, 180, 100), (int(self.x), int(self.y)), self.radius, 3)
+        draw_hp_bar(screen, self.x, self.y, self.radius, hp_frac)
 
 
-def _clamp(rect, arena):
-    if rect.left < arena.left: rect.left = arena.left
-    if rect.right > arena.right: rect.right = arena.right
-    if rect.top < arena.top: rect.top = arena.top
-    if rect.bottom > arena.bottom: rect.bottom = arena.bottom
+def draw_enemy_base(screen, x, y, radius, color, hp_frac):
+    shadow_color = tuple(max(0, c - 60) for c in color)
+    pygame.draw.circle(screen, shadow_color, (int(x) + 2, int(y) + 2), radius)
+
+def draw_hp_bar(screen, x, y, radius, hp_frac):
+    bar_w = radius * 2 + 4
+    bar_h = 4
+    bx = int(x) - bar_w // 2
+    by = int(y) - radius - 8
+    pygame.draw.rect(screen, (80, 20, 20), (bx, by, bar_w, bar_h))
+    pygame.draw.rect(screen, (60, 220, 60), (bx, by, int(bar_w * hp_frac), bar_h))
