@@ -1,79 +1,39 @@
 import random
 from enemies import Swarmer, Shooter, Tank
-from powerups import POWERUP_DEFS
 
 class WaveManager:
     def __init__(self):
-        self.wave_number = 0
-        self.spawned_count = 0
-        self.total_this_wave = 0
+        self.current_wave = 0
+        self.wave_active = False
 
-    def start_next_wave(self):
-        self.wave_number += 1
-        self.spawned_count = 0
+    def start_next_wave(self, enemies_list, arena):
+        self.current_wave += 1
+        self.wave_active = True
+        new_enemies = self._generate_enemies(self.current_wave, arena)
+        enemies_list.clear()
+        enemies_list.extend(new_enemies)
 
-    def wave_complete(self):
-        return self.spawned_count >= self.total_this_wave
-
-    def spawn_enemies(self, arena_rect):
-        w = self.wave_number
+    def _generate_enemies(self, wave, arena):
         enemies = []
+        base = wave + 2
+        n_swarmers = base + random.randint(0, wave)
+        n_shooters = max(0, wave - 1) + random.randint(0, max(1, wave // 2))
+        n_tanks = max(0, (wave - 2) // 2)
 
-        swarmers = 3 + w * 2
-        shooters = max(0, w - 1)
-        tanks = max(0, (w - 2) // 2)
+        margin = 80
+        def rand_pos():
+            x = random.randint(arena.left + margin, arena.right - margin)
+            y = random.randint(arena.top + margin, arena.bottom - margin)
+            return x, y
 
-        self.total_this_wave = swarmers + shooters + tanks
+        for _ in range(n_swarmers):
+            x, y = rand_pos()
+            enemies.append(Swarmer(x, y))
+        for _ in range(n_shooters):
+            x, y = rand_pos()
+            enemies.append(Shooter(x, y))
+        for _ in range(n_tanks):
+            x, y = rand_pos()
+            enemies.append(Tank(x, y))
 
-        positions = []
-
-        def rand_pos(radius):
-            for _ in range(50):
-                margin = radius + 20
-                x = random.randint(arena_rect.left + margin, arena_rect.right - margin)
-                y = random.randint(arena_rect.top + margin, arena_rect.bottom - margin)
-                positions.append((x, y))
-                return x, y
-            return arena_rect.centerx, arena_rect.centery
-
-        def rand_edge():
-            side = random.randint(0, 3)
-            margin = 40
-            if side == 0:
-                return random.randint(arena_rect.left + margin, arena_rect.right - margin), arena_rect.top + margin
-            elif side == 1:
-                return random.randint(arena_rect.left + margin, arena_rect.right - margin), arena_rect.bottom - margin
-            elif side == 2:
-                return arena_rect.left + margin, random.randint(arena_rect.top + margin, arena_rect.bottom - margin)
-            else:
-                return arena_rect.right - margin, random.randint(arena_rect.top + margin, arena_rect.bottom - margin)
-
-        for _ in range(swarmers):
-            x, y = rand_edge()
-            e = Swarmer(x, y)
-            e.hp = 30 + w * 5
-            e.max_hp = e.hp
-            e.speed = min(220, 160 + w * 8)
-            enemies.append(e)
-
-        for _ in range(shooters):
-            x, y = rand_edge()
-            e = Shooter(x, y)
-            e.hp = 60 + w * 10
-            e.max_hp = e.hp
-            e.shoot_interval = max(0.8, 2.0 - w * 0.1)
-            enemies.append(e)
-
-        for _ in range(tanks):
-            x, y = rand_edge()
-            e = Tank(x, y)
-            e.hp = 250 + w * 40
-            e.max_hp = e.hp
-            enemies.append(e)
-
-        self.spawned_count = self.total_this_wave
-        random.shuffle(enemies)
         return enemies
-
-    def pick_cards(self, count):
-        return random.sample(POWERUP_DEFS, min(count, len(POWERUP_DEFS)))
